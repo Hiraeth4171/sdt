@@ -77,6 +77,7 @@ static inline void sdt_hashtable_remove(SDTHashtable* hashtable, void* item_id) 
 }
 
 static inline void* sdt_hashtable_get(SDTHashtable* hashtable, void* item_id) {
+    if (hashtable == NULL) return NULL;
     size_t i = hashtable->hash_function(item_id, hashtable->length);
     if (hashtable->items[i] != NULL) { // add a safegaurd
         SDTLinkedListNode* cur = hashtable->items[i];
@@ -110,7 +111,11 @@ free_ptr:
 static inline void sdt_hashtable_print(SDTHashtable* hashtable, void (*print_callback)(void*)) {
     for (size_t i = 0; i < hashtable->length; ++i) {
         SDTLinkedListNode* cur = hashtable->items[i];
+#if defined(_WIN32) || defined(_WIN64)
+        printf("%llu : ", i);
+#elif defined(__linux__)
         printf("%lu : ", i);
+#endif
         while (cur != NULL && cur->value != NULL) {
             print_callback(cur->value);
             printf(" -> ");
