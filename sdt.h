@@ -31,6 +31,8 @@ typedef struct {
 /*
  * TODO:
  *  - SDTStack
+ *  - SDTBSTree
+ *
  * */
 
 static inline SDTHashtable* sdt_hashtable_init(size_t size, size_t item_size, size_t (*hash_function)(void*, size_t), int (*item_cmp)(void*, void*), void (*item_free)(void*)) {
