@@ -1,8 +1,8 @@
 setup:
-	sudo mkdir /usr/lib/include/SDT
+	sudo mkdir -p /usr/lib/include/SDT
 
 install: 
-	sudo cp ./sdt.h /usr/lib/include/SDT/sdt.h
+	sudo cp ./SDT/* /usr/lib/include/SDT/
 
 valgrind-clean:
 	rm -f vgcore.*
