@@ -76,8 +76,8 @@ static inline SDTThreadpool* sdt_create_threadpool(int thread_count, int max_wor
     SDTThreadpool* tp = (SDTThreadpool*)malloc(sizeof(SDTThreadpool));
     void** jobs = (void**)malloc(sizeof(SDTJob*) * max_work);
     tp->work = sdt_create_arr_queue(jobs, max_work, free);
-    tp->work_mutex = PTHREAD_MUTEX_INITIALIZER;
-    tp->signal = PTHREAD_COND_INITIALIZER;
+    pthread_mutex_init(&tp->work_mutex, NULL);
+    pthread_cond_init(&tp->signal, NULL);
     tp->pause = false;
     tp->stop = false;
     tp->paused = 0;
