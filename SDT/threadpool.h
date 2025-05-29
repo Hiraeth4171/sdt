@@ -123,5 +123,3 @@ static inline bool sdt_threadpool_add_work(SDTThreadpool* tp, void*(*func)(void*
     
     return ret;
 }
-
-// worker function
