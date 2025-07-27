@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include "queue.h"
@@ -34,43 +35,89 @@ static inline bool sdt_remove_latest_job(SDTThreadpool* tp) {
     return sdt_arr_dequeue(tp->work);
 }
 
-
 static inline void* _worker_thread(void *arg) {
     SDTThreadpool* tp = (SDTThreadpool*)arg;
-return_after_pause:
-    tp->paused--;
     while (1) {
         pthread_mutex_lock(&tp->work_mutex);
-        while (sdt_arr_queue_is_empty(tp->work) && !tp->pause)
+        
+        while (sdt_arr_queue_is_empty(tp->work)) {
+            if (tp->stop) {
+                tp->thread_count--;
+                if (tp->thread_count == 0) {
+                    pthread_cond_signal(&tp->stopped);
+                }
+                pthread_mutex_unlock(&tp->work_mutex);
+                return NULL;
+            }
             pthread_cond_wait(&tp->signal, &tp->work_mutex);
-
-        if (tp->pause)
-            break;
-
-        if (tp->stop) {
-            pthread_mutex_unlock(&tp->work_mutex);
-            return NULL;
         }
 
-        SDTJob* work = sdt_get_job(tp);
+        SDTJob* work = (SDTJob*)sdt_arr_peek(tp->work);
+        if (!work || !sdt_arr_dequeue(tp->work)) {
+            pthread_mutex_unlock(&tp->work_mutex);
+            continue;
+        }
+
         tp->worker_count++;
         pthread_mutex_unlock(&tp->work_mutex);
-        if (work != NULL) {
-            work->work(work->arg);
-            sdt_remove_latest_job(tp);
-        }
+
+        // Process job outside lock
+        work->work(work->arg);
+        free(work);
+
         pthread_mutex_lock(&tp->work_mutex);
         tp->worker_count--;
-        if (!tp->stop && tp->worker_count == 0 && sdt_arr_queue_is_empty(tp->work))
+        if (tp->stop && tp->worker_count == 0 && sdt_arr_queue_is_empty(tp->work)) {
             pthread_cond_signal(&tp->stopped);
+        }
         pthread_mutex_unlock(&tp->work_mutex);
     }
-    pthread_mutex_unlock(&tp->work_mutex);
-    tp->paused++;
-    while (tp->pause)
-        pthread_cond_wait(&tp->signal, &tp->work_mutex);
-    goto return_after_pause;
 }
+
+// static inline void* _worker_thread(void *arg) {
+//     SDTThreadpool* tp = (SDTThreadpool*)arg;
+// return_after_pause:
+//     tp->paused--;
+//     while (1) {
+//         pthread_mutex_lock(&tp->work_mutex);
+//         while (sdt_arr_queue_is_empty(tp->work) && !tp->pause)
+//             pthread_cond_wait(&tp->signal, &tp->work_mutex);
+//
+//         if (tp->pause)
+//             break;
+//
+//         if (tp->stop) {
+//             pthread_mutex_unlock(&tp->work_mutex);
+//             printf("tid : [%lu] | worker count %d,\t work count %d [HAS STOPPED]\n", pthread_self(), tp->worker_count, sdt_arr_get_length(tp->work));
+//             goto stopped;
+//         }
+//
+//         SDTJob* work = (SDTJob*)sdt_arr_peek(tp->work);
+//         if (work != NULL && sdt_arr_dequeue(tp->work)) {
+//             tp->worker_count++;
+//             pthread_mutex_unlock(&tp->work_mutex);
+//             printf("tid : [%lu] | worker count %d,\t work count %d\n", pthread_self(), tp->worker_count, sdt_arr_get_length(tp->work));
+//             work->work(work->arg);
+//             free(work);
+//             pthread_mutex_lock(&tp->work_mutex);
+//             tp->worker_count--;
+//         }
+//         pthread_mutex_unlock(&tp->work_mutex);
+//     }
+//     pthread_mutex_lock(&tp->work_mutex);
+//     tp->paused++;
+//     while (tp->pause)
+//         pthread_cond_wait(&tp->signal, &tp->work_mutex);
+//     goto return_after_pause;
+// stopped:
+//     pthread_mutex_lock(&tp->work_mutex);
+//     tp->thread_count--;
+//     if (tp->thread_count == 0) {
+//         pthread_cond_signal(&tp->stopped);
+//     }
+//     pthread_mutex_unlock(&tp->work_mutex);
+//     return NULL;
+// }
 
 static inline SDTThreadpool* sdt_create_threadpool(int thread_count, int max_work) {
     SDTThreadpool* tp = (SDTThreadpool*)malloc(sizeof(SDTThreadpool));
@@ -81,12 +128,27 @@ static inline SDTThreadpool* sdt_create_threadpool(int thread_count, int max_wor
     tp->pause = false;
     tp->stop = false;
     tp->paused = 0;
+    tp->thread_count = thread_count;
+    tp->worker_count = 0;
     pthread_t thread;
     for (int i = 0; i < thread_count; ++i) {
         pthread_create(&thread, NULL, _worker_thread, tp);
         pthread_detach(thread);
     }
     return tp;
+}
+
+static inline void sdt_threadpool_wait(SDTThreadpool* tp) {
+    pthread_mutex_lock(&tp->work_mutex);
+    while (1) {
+        printf("waiting...\n");
+        if (sdt_arr_queue_is_empty(tp->work) || (!tp->stop && tp->worker_count != 0) || (tp->stop && tp->thread_count != 0)) {
+            pthread_cond_wait(&tp->stopped, &tp->work_mutex);
+        } else {
+            break;
+        }
+    }
+    pthread_mutex_unlock(&tp->work_mutex);
 }
 
 static inline void sdt_destroy_threadpool(SDTThreadpool* tp) {
@@ -96,18 +158,12 @@ static inline void sdt_destroy_threadpool(SDTThreadpool* tp) {
     }
     tp->stop = true;
     pthread_cond_broadcast(&tp->signal);
-    pthread_mutex_lock(&tp->work_mutex);
-    while (1) {
-        if (sdt_arr_queue_is_empty(tp->work) || (!tp->stop && tp->worker_count != 0)) {
-            pthread_cond_wait(&tp->stopped, &tp->work_mutex);
-        } else {
-            break;
-        }
-    }
     pthread_mutex_unlock(&tp->work_mutex);
+    sdt_threadpool_wait(tp);
+    free(tp->work->arr);
     pthread_mutex_destroy(&tp->work_mutex);
     pthread_cond_destroy(&tp->signal);
-
+    pthread_cond_destroy(&tp->stopped);
     free(tp);
 }
 
