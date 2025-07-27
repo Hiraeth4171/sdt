@@ -67,7 +67,7 @@ static inline void* _worker_thread(void *arg) {
 
         pthread_mutex_lock(&tp->work_mutex);
         tp->worker_count--;
-        if (tp->stop && tp->worker_count == 0 && sdt_arr_queue_is_empty(tp->work)) {
+        if (tp->worker_count == 0 && sdt_arr_queue_is_empty(tp->work)) {
             pthread_cond_signal(&tp->stopped);
         }
         pthread_mutex_unlock(&tp->work_mutex);
@@ -121,8 +121,8 @@ static inline void* _worker_thread(void *arg) {
 
 static inline SDTThreadpool* sdt_create_threadpool(int thread_count, int max_work) {
     SDTThreadpool* tp = (SDTThreadpool*)malloc(sizeof(SDTThreadpool));
-    void** jobs = (void**)malloc(sizeof(SDTJob*) * max_work);
-    tp->work = sdt_create_arr_queue(jobs, max_work, free);
+    void** jobs = (void**)malloc(sizeof(SDTJob*) * (max_work+1));
+    tp->work = sdt_create_arr_queue(jobs, max_work, NULL);
     pthread_mutex_init(&tp->work_mutex, NULL);
     pthread_cond_init(&tp->signal, NULL);
     tp->pause = false;
@@ -140,13 +140,9 @@ static inline SDTThreadpool* sdt_create_threadpool(int thread_count, int max_wor
 
 static inline void sdt_threadpool_wait(SDTThreadpool* tp) {
     pthread_mutex_lock(&tp->work_mutex);
-    while (1) {
+    while (!sdt_arr_queue_is_empty(tp->work) || tp->worker_count > 0) {
         printf("waiting...\n");
-        if (sdt_arr_queue_is_empty(tp->work) || (!tp->stop && tp->worker_count != 0) || (tp->stop && tp->thread_count != 0)) {
-            pthread_cond_wait(&tp->stopped, &tp->work_mutex);
-        } else {
-            break;
-        }
+        pthread_cond_wait(&tp->stopped, &tp->work_mutex);
     }
     pthread_mutex_unlock(&tp->work_mutex);
 }
@@ -154,6 +150,8 @@ static inline void sdt_threadpool_wait(SDTThreadpool* tp) {
 static inline void sdt_destroy_threadpool(SDTThreadpool* tp) {
     pthread_mutex_lock(&tp->work_mutex);
     while (!sdt_arr_queue_is_empty(tp->work)) {
+        SDTJob* job = (SDTJob*)sdt_arr_peek(tp->work);
+        if (job) free(job);
         sdt_arr_dequeue(tp->work);
     }
     tp->stop = true;
